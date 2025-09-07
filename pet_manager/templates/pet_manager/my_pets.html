@@ -1,0 +1,17 @@
+<!-- pet_manager/templates/pet_manager/my_pets.html -->
+{% extends "base.html" %}
+
+{% block content %}
+<h2>My Pets</h2>
+{% if pets %}
+    <ul>
+    {% for pet in pets %}
+        <li>
+            <strong>{{ pet.name }}</strong> - {{ pet.species }}
+        </li>
+    {% endfor %}
+    </ul>
+{% else %}
+    <p>You haven’t added any pets yet.</p>
+{% endif %}
+{% endblock %}

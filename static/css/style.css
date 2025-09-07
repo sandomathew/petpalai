@@ -1,0 +1,223 @@
+/* PetPalAI/static/css/style.css */
+
+body {
+    font-family: sans-serif;
+    margin: 20px;
+    background-color: #f4f4f4;
+    color: #333;
+}
+
+h1, h2, h3 {
+    color: #0056b3;
+}
+
+form {
+    background-color: #fff;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    max-width: 600px;
+    margin: 20px auto;
+}
+
+pre {
+    background-color: #eee;
+    padding: 10px;
+    border-radius: 5px;
+    white-space: pre-wrap; /* Ensures long lines wrap */
+}
+
+.chat-widget {
+    position: fixed;
+    bottom: 80px;
+    right: 30px;
+    width: 350px;
+    max-height: 500px;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 12px;
+    box-shadow: 0 8px 16px rgba(0,0,0,0.2);
+    display: none;
+    flex-direction: column;
+    z-index: 9999;
+    overflow: hidden;
+    font-family: sans-serif;
+}
+
+.chat-header {
+    background: #0056b3;
+    color: white;
+    padding: 12px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.chat-close {
+    background: none;
+    color: white;
+    font-size: 20px;
+    border: none;
+    cursor: pointer;
+}
+
+.chat-body {
+    padding: 12px;
+    overflow-y: auto;
+    flex: 1;
+    background: #f9f9f9;
+}
+
+.chat-footer {
+    display: flex;
+    padding: 10px;
+    border-top: 1px solid #ddd;
+    background-color: #fff;
+}
+
+.chat-footer input {
+    flex: 1;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    margin-right: 8px;
+}
+
+.chat-footer button {
+    padding: 8px 14px;
+    background-color: #0056b3;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.chat-toggle {
+    position: fixed;
+    bottom: 20px;
+    right: 30px;
+    background-color: #0056b3;
+    border: none;
+    border-radius: 50%;
+    color: white;
+    padding: 8px 12px;
+    border-radius: 10px;
+    max-width: 80%;
+    font-size: 24px;
+    cursor: pointer;
+    z-index: 9998;
+}
+
+/* Chat bubbles */
+.chat-message {
+    margin-bottom: 12px;
+    display: flex;
+    align-items: flex-start;
+}
+
+.chat-message.agent {
+    color: #333;
+}
+
+.chat-message.user {
+    justify-content: flex-end;
+}
+
+.chat-message.user span {
+    background: #0056b3;
+    color: white;
+    padding: 8px 12px;
+    border-radius: 10px;
+    max-width: 80%;
+    display: inline-block;
+}
+
+.chat-message.agent span {
+    background: #e6e6e6;
+    padding: 8px 12px;
+    border-radius: 10px;
+    max-width: 80%;
+    display: inline-block;
+}
+
+.agent-avatar {
+    margin-right: 8px;
+    font-size: 20px;
+}
+
+
+.nav-container {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: #0056b3;
+    padding: 10px 20px;
+    color: white;
+}
+
+.nav-brand .brand-link {
+    color: white;
+    font-weight: bold;
+    text-decoration: none;
+    font-size: 24px;
+}
+
+.nav-links a,
+.nav-auth a {
+    margin-left: 15px;
+    color: white;
+    text-decoration: none;
+    font-size: 16px;
+}
+
+.nav-links a:hover,
+.nav-auth a:hover {
+    text-decoration: underline;
+}
+
+
+/* Typing Animation */
+.typing-animation {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 36px; /* aligns next to avatar bubble */
+}
+
+.typing-animation span {
+    width: 6px;
+    height: 6px;
+    background-color: #555;
+    border-radius: 50%;
+    opacity: 0;
+    animation: bounce 1.4s infinite ease-in-out;
+}
+
+.typing-animation span:nth-child(2) {
+    animation-delay: 0.2s;
+}
+.typing-animation span:nth-child(3) {
+    animation-delay: 0.4s;
+}
+
+@keyframes bounce {
+    0%, 80%, 100% {
+        transform: scale(0);
+        opacity: 0;
+    }
+    40% {
+        transform: scale(1);
+        opacity: 1;
+    }
+}
+
+main {
+    padding: 20px;
+}
+
+footer {
+    margin-top: 40px;
+    padding: 20px;
+    background-color: #eee;
+    text-align: center;
+}

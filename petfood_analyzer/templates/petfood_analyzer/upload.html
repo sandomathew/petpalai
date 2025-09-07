@@ -1,0 +1,105 @@
+{# petfood_analyzer/templates/petfood_analyzer/upload.html #}
+
+{% extends "base.html" %} {# Extend your project-level base template #}
+{% load static %} {# Load static files if you use them here (e.g., custom CSS/JS for this page) #}
+
+{% block title %}Analyze Pet Food Label{% endblock %}
+
+{% block content %}
+    <h2>Upload Pet Food Label for Analysis</h2>
+
+    {% if error_message %}
+        <div class="alert alert-danger" role="alert">{{ error_message }}</div>
+    {% endif %}
+
+    <form method="post" enctype="multipart/form-data" class="mb-4 p-4 border rounded shadow-sm">
+        {% csrf_token %} {# Django's security token for forms #}
+
+        {% for field in form %}
+            <div class="mb-3">
+                {{ field.label_tag }}
+                {{ field }}
+                {% if field.help_text %}
+                    <div class="form-text text-muted">{{ field.help_text }}</div>
+                {% endif %}
+                {% for error in field.errors %}
+                    <div class="invalid-feedback d-block">{{ error }}</div>
+                {% endfor %}
+            </div>
+        {% endfor %}
+
+        <button type="submit" class="btn btn-primary">Analyze Label</button>
+        <span id="loading-spinner" class="spinner-border spinner-border-sm text-primary" role="status" aria-hidden="true" style="display: none;"></span>
+    </form>
+
+   {% if food_scan %}
+        <div class="card mt-4 shadow-sm">
+            <div class="card-header bg-success text-white">
+                <h3 class="mb-0">Analysis Results for "{{ food_scan.product_name|default:"Unnamed Product" }}"</h3>
+            </div>
+            <div class="card-body">
+                <p class="card-text"><strong>Food Type:</strong> {{ food_scan.get_food_type_display }}</p>
+                <p class="card-text"><strong>Scanned At:</strong> {{ food_scan.scanned_at|date:"M d, Y H:i" }}</p>
+
+                <h4 class="mt-4">Uploaded Image:</h4>
+                {% if food_scan.image %}
+                    <img src="{{ food_scan.image.url }}" alt="Uploaded Label" class="img-fluid rounded border" style="max-height: 400px; object-fit: contain;">
+                {% else %}
+                    <p>No image available.</p>
+                {% endif %}
+
+                <h4 class="mt-4">Raw Text (OCR):</h4>
+                <pre class="p-3 bg-light border rounded">{{ food_scan.raw_text|default:"No text extracted." }}</pre>
+
+                <h4 class="mt-4">Parsed Nutritional Data:</h4>
+                {% if food_scan.parsed_data %}
+                    <pre style="display: none;" id="parsed_data_raw">{{ food_scan.parsed_data|json_script:"parsed_data" }}</pre>
+                    <div id="parsed-data-display" class="p-3 bg-light border rounded"></div>
+                    <script>
+                        const dataElement = document.getElementById('parsed_data_raw');
+                        if (dataElement) {
+                            const data = JSON.parse(dataElement.textContent);
+                            document.getElementById('parsed-data-display').innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                        }
+                    </script>
+                {% else %}
+                    <p>No parsed data available.</p>
+                {% endif %}
+
+                {% if food_scan.calorie_content_kcal_per_kg or food_scan.calorie_content_per_unit %}
+                    <h4 class="mt-4">Calorie Content:</h4>
+                    {% if food_scan.calorie_content_kcal_per_kg %}
+                        <p><strong>kcal ME/kg:</strong> {{ food_scan.calorie_content_kcal_per_kg }}</p>
+                    {% endif %}
+                    {% if food_scan.calorie_content_per_unit %}
+                        <p><strong>Per Unit:</strong> {{ food_scan.calorie_content_per_unit }}</p>
+                    {% endif %}
+                {% endif %}
+
+
+                <h4 class="mt-4">AI-Generated Pros & Cons:</h4>
+                <div class="p-3 bg-light border rounded" style="white-space: pre-wrap;">{{ food_scan.ai_analysis|default:"No AI analysis generated yet." }}</div>
+
+            </div>
+        </div>
+    {% endif %}
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    document.addEventListener('DOMContentLoaded', function() {
+        const form = document.getElementById('upload-form');
+        const submitButton = document.getElementById('submit-button');
+        const loadingSpinner = document.getElementById('loading-spinner');
+
+        form.addEventListener('submit', function(event) {
+            // Disable the button to prevent multiple submissions
+            submitButton.disabled = true;
+            submitButton.textContent = 'Processing...';
+
+            // Show the loading spinner
+            loadingSpinner.style.display = 'inline-block';
+        });
+    });
+</script>
+{% endblock %}
