@@ -12,7 +12,9 @@
         <div class="alert alert-danger" role="alert">{{ error_message }}</div>
     {% endif %}
 
-    <form method="post" enctype="multipart/form-data" class="mb-4 p-4 border rounded shadow-sm">
+    <form id="upload-form" method="post"
+          enctype="multipart/form-data" class="mb-4 p-4 border rounded shadow-sm"
+          data-stream-url-base="{% url 'stream_data' task_id='_task_id_' %}">
         {% csrf_token %} {# Django's security token for forms #}
 
         {% for field in form %}
@@ -28,9 +30,11 @@
             </div>
         {% endfor %}
 
-        <button type="submit" class="btn btn-primary">Analyze Label</button>
-        <span id="loading-spinner" class="spinner-border spinner-border-sm text-primary" role="status" aria-hidden="true" style="display: none;"></span>
+        <button type="submit" id="submit-button" class="btn btn-primary">Analyze Label</button>
     </form>
+
+    <div id="results-container"></div>
+    <div id="status-message"></div>
 
    {% if food_scan %}
         <div class="card mt-4 shadow-sm">
@@ -86,20 +90,137 @@
 {% endblock %}
 
 {% block extra_js %}
-<script>
+    <script>
     document.addEventListener('DOMContentLoaded', function() {
         const form = document.getElementById('upload-form');
         const submitButton = document.getElementById('submit-button');
-        const loadingSpinner = document.getElementById('loading-spinner');
+        const typingMsg = document.getElementById("typing-indicator");
+        const resultsContainer = document.getElementById('results-container');
+        const statusMessage = document.getElementById('status-message');
+        const msgtxt = document.getElementById('msg-txt');
+        const csrfToken = document.querySelector('[name=csrfmiddlewaretoken]').value;
+        const startUrl = "{% url 'start_stream_analysis' %}";
 
         form.addEventListener('submit', function(event) {
-            // Disable the button to prevent multiple submissions
-            submitButton.disabled = true;
-            submitButton.textContent = 'Processing...';
+            event.preventDefault();
 
-            // Show the loading spinner
-            loadingSpinner.style.display = 'inline-block';
+            // Show loading state
+            ShowLoadingState();
+
+            const formData = new FormData(form);
+
+            fetch(startUrl, {
+                method: 'POST',
+                body: formData,
+                headers: {
+                    'X-CSRFToken': csrfToken
+                }
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'processing' && data.task_id) {
+                    const streamUrl = form.dataset.streamUrlBase.replace('_task_id_', data.task_id);
+                    const source = new EventSource(streamUrl);
+
+                    source.onmessage = function(event) {
+                    const data = JSON.parse(event.data);
+                    updateStatusMessage(data.message);
+                    if (data.status === 'ocr_complete') {
+                        // Display OCR text immediately
+                        resultsContainer.innerHTML += `<h4>Raw Text (OCR):</h4><pre class="p-3 bg-light border rounded">${data.raw_text}</pre>`;
+                    } else if (data.status === 'llm_complete') {
+                        // Display LLM output
+                        resultsContainer.innerHTML += `<h4>AI-Generated Pros & Cons:</h4><div class="p-3 bg-light border rounded" style="white-space: pre-wrap;">${data.ai_analysis}</div>`;
+                        source.close(); // Close the connection
+                        hideLoadingState();
+                    } else if (data.status === 'error') {
+                        displayError(data.message);
+                        source.close();
+                    }
+                    };
+
+                    source.onerror = function(error) {
+                        console.error('EventSource failed:', error);
+                        source.close();
+                        displayError("Streaming failed. Please try again.");
+                         hideLoadingState();
+                    };
+            } else {
+                    displayError(data.message || 'An unexpected error occurred.');
+                    hideLoadingState();
+                    }
+            })
+            .catch(error => {
+                console.error('Fetch failed:', error);
+                displayError("Submission failed. " + error.message);
+                hideLoadingState();
+            });
         });
+
+        // Processing helper functions
+        function ShowLoadingState() {
+            submitButton.disabled = true;
+            submitButton.textContent = 'Analyzing...';
+            resultsContainer.innerHTML = '';
+            statusMessage.textContent = '';
+            // Clear previous content and animation if it exists
+            const existingContainer = document.getElementById('typing-container');
+            if (existingContainer) {
+                existingContainer.remove();
+            }
+            const typingContainer = document.createElement('div');
+            typingContainer.id = "typing-container";
+
+            const typingMsg = document.createElement('div');
+            typingMsg.className = "chat-message agent typing";
+            typingMsg.innerHTML = `
+                <span class="agent-avatar">
+                    <img src="/static/images/paai_trim1.jpg" alt="PAAI avatar">
+                </span>
+                <div class="status-and-animation">
+                    <div id="status-text"></div>
+                    <div class="typing-animation">
+                        <span></span><span></span><span></span>
+                    </div>
+                </div>
+            `;
+            typingMsg.id = "typing-indicator";
+            typingContainer.appendChild(typingMsg);
+
+            statusMessage.appendChild(typingContainer);
+        }
+
+        function hideLoadingState() {
+            submitButton.disabled = false;
+            submitButton.textContent = 'Analyze Label';
+            const typingContainer = document.getElementById('typing-container');
+            if (typingContainer) {
+                typingContainer.remove();
+            }
+        }
+
+        // Function to update the message text
+        function updateStatusMessage(message) {
+            const statusTextDiv = document.getElementById('status-text');
+            if (statusTextDiv) {
+                statusTextDiv.textContent = message;
+            }
+        }
+
+        function displayOcr(rawText) {
+            resultsContainer.innerHTML += `<h4>Raw Text (OCR):</h4><pre class="p-3 bg-light border rounded">${rawText || 'No text extracted.'}</pre>`;
+        }
+
+        function displayLlmOutput(aiAnalysis) {
+            resultsContainer.innerHTML += `<h4>AI-Generated Pros & Cons:</h4><div class="p-3 bg-light border rounded" style="white-space: pre-wrap;">${aiAnalysis || 'No AI analysis generated yet.'}</div>`;
+        }
+
+        function displayError(message) {
+            // Hide loading state
+            hideLoadingState();
+            // Display the error message
+            resultsContainer.innerHTML = `<div class="alert alert-danger" role="alert">${message}</div>`;
+        }
     });
-</script>
+    </script>
 {% endblock %}

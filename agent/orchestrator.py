@@ -16,6 +16,10 @@ from pet_manager.utils import create_pet_via_agent
 from user_profile.utils import register_user_via_agent
 from PetPalAI.utils import get_food_label_collection
 
+# A simple in-memory store for streaming messages
+STREAM_DATA_STORE = {}
+
+# A slot logic to make sure important fields are available before call Pet agent/tool
 class PetSlots:
     def __init__(self, name=None, species=None, breed=None, gender=None, weight_lbs=None, birth_date=None):
         self.name = name
@@ -42,9 +46,10 @@ class PetSlots:
         return None
 
 class AgentOrchestrator:
-    def __init__(self, request, user):
+    def __init__(self, request, user, task_id=None):
         self.request = request
         self.user = user
+        self.task_id = task_id
         # Get or create an active case for the session
         self.case = self._get_or_create_active_case()
 
@@ -74,7 +79,7 @@ class AgentOrchestrator:
 
         return case
 
-    def _add_to_conversation_history(self, role, content):
+    def _add_to_conversation_history(self, role, content, type="status"):
         """Logs a conversation turn to the database using the ConversationTurn model."""
         """
             Appends a new conversation turn to the JSONField history.
@@ -83,20 +88,34 @@ class AgentOrchestrator:
                 role (str): The role of the speaker (e.g., "User", "AI")
                 message (str): The content of the message
             """
-        # 1. Retrieve the existing history.
-        # Use .json() to get a copy or default to an empty list.
-        case = self.case
-        history = case.ai_conversation_history
-        if not isinstance(history, list):
-            history = []
+        # Add task to stream store to give a better user experience.
+        if self.task_id:
+            if self.task_id not in STREAM_DATA_STORE:
+                STREAM_DATA_STORE[self.task_id] = {'status': 'pending', 'data': []}
 
-        # 2. Append the new message dictionary.
-        new_turn = {"role": role, "message": content}
-        history.append(new_turn)
+            # Append a structured message to the stream
+            if role == "agent":
+                stream_msg = {"role": role, "type": type, "message": content}
+                STREAM_DATA_STORE[self.task_id]['data'].append(stream_msg)
+                if type == "final":
+                    STREAM_DATA_STORE[self.task_id]['status'] = 'completed'
 
-        # 3. Save the updated list back to the field.
-        case.ai_conversation_history = history
-        case.save()
+        if type in ["final", "partial"]:
+            # 1. Retrieve the existing history.
+            # Use .json() to get a copy or default to an empty list.
+            case = self.case
+            history = case.ai_conversation_history
+            if not isinstance(history, list):
+                history = []
+
+             # 2. Append the new message dictionary.
+
+            new_turn = {"role": role, "message": content}
+            history.append(new_turn)
+
+            # 3. Save the updated list back to the field.
+            case.ai_conversation_history = history
+            case.save()
 
     def _execute_intent(self, intent, params):
 
@@ -144,7 +163,9 @@ class AgentOrchestrator:
     @transaction.atomic
     def handle_message(self, message):
         """Main orchestration method for a single user message."""
-        self._add_to_conversation_history("user", message)
+        self._add_to_conversation_history("user", message, type="partial")
+
+        self._add_to_conversation_history("agent", f"Case id  {self.case.case_id} created", type="partial")
 
         replies, deferred_intents = [], []
 
@@ -158,7 +179,10 @@ class AgentOrchestrator:
 
         # 1. Parse the message for intents
         # ... (parsing logic) ...
+        # Add an intermediate message to the stream
+        self._add_to_conversation_history("agent", "Analyzing your request",  type="status")
         parsed_intents = try_llm_parser(message)
+
         print("inside handle_message")
         print("message - ", message)
         print("parsed_intents - ", parsed_intents)
@@ -177,6 +201,7 @@ class AgentOrchestrator:
             try:
 
                 intent = intent_data.get("intent")
+                self._add_to_conversation_history("agent", f"Processing {intent}", type="status")
                 params = intent_data.get("params", {})
 
                 # 🔒 Defer if login is required and the user isn't authenticated
@@ -204,8 +229,11 @@ class AgentOrchestrator:
 
                 # ✅ Execute the intent and get the reply
                 result, internal_log = self._execute_intent(intent_data.get("intent"), intent_data.get("params", {}))
+                self._add_to_conversation_history("agent", f"Completed {intent}", type="status")
                 reply = result["message"]
                 replies.append(reply)
+                # Add partial reply
+                self._add_to_conversation_history("agent", reply, type="status")
                 self.case.internal_notes += f"\n- {internal_log}"
                 self.case.customer_notes += f"\n- {reply}"
             except Exception as e:
@@ -224,62 +252,78 @@ class AgentOrchestrator:
         else:
             self.case.status = "resolved"
 
+
+
+        # Finalize the conversation history and stream
+        # Join replies to a single final log message
+        final_reply_text = "\n".join(replies) if replies else "✅ Noted."
+        print("final_reply_text - ", final_reply_text)
+        self._add_to_conversation_history("agent", final_reply_text, type="final")
+
         # 4. Finalize the case
         self.case.updated_at = datetime.now()
         self.case.save()
-
-        reply_text = "\n".join(replies) if replies else "✅ Noted."
-        self._add_to_conversation_history("agent", reply_text)
-
-        return {"reply": reply_text}
+        #return {"reply": reply_text}
 
     @transaction.atomic
     def resume_pending_tasks(self):
-        """Method to resume pending tasks for a logged-in user."""
-        print("inside resume_pending_tasks")
-        # Get the latest case with pending intents for the user
-        self.case = AgentCase.objects.filter(user=self.user,status="open",pending_intents__isnull=False).order_by(
-            '-updated_at').first()
+        """
+        Thread-safe resume_pending_tasks for a logged-in user that streams to the client.
+        """
+        try:
+
+            # Get the latest case with pending intents for the user
+            self.case = AgentCase.objects.filter(user=self.user,status="open",pending_intents__isnull=False).order_by(
+                '-updated_at').first()
 
 
+            if not self.case or not self.case.pending_intents:
+                return {"history":[],
+                        "reply": "👋 Hi! I'm PAAI – your PetPalAI Agent. <br> Please note: your interactions may be reviewed for quality and improvement purposes."}
+                #return {"reply": "👋 Hi! I'm PAAI – your PetPalAI Agent. <br> Please note: your interactions may be reviewed for quality and improvement purposes."}
 
-        if not self.case or not self.case.pending_intents:
-            return {"history":[],
-                    "reply": "👋 Hi! I'm PAAI – your PetPalAI Agent. <br> Please note: your interactions may be reviewed for quality and improvement purposes."}
-            #return {"reply": "👋 Hi! I'm PAAI – your PetPalAI Agent. <br> Please note: your interactions may be reviewed for quality and improvement purposes."}
+                        # ✅ fetch old conversation from case
+            history = getattr(self.case, "ai_conversation_history", [])
+            if not history:
+                # fallback to conversation turns table if you’re using that model
+                history = [
+                    {"role": t.role, "message": t.content}
+                    for t in self.case.conversation.all().order_by("created_at")
+                ]
+            # Send a special message to the stream that the JS can use to load history
+            print("inside resume_pending_tasks", self.case.case_id)
+            print("inside resume_pending_tasks", history)
+            self._add_to_conversation_history(role="agent", content=history, type="history_preload")
+            self._add_to_conversation_history("agent", "Resuming pending tasks.", type="status")
+            replies = []
+            pending = list(self.case.pending_intents)  # Create a copy to iterate
 
-                    # ✅ fetch old conversation from case
-        history = getattr(self.case, "ai_conversation_history", [])
-        if not history:
-            # fallback to conversation turns table if you’re using that model
-            history = [
-                {"role": t.role, "message": t.content}
-                for t in self.case.conversation.all().order_by("created_at")
-            ]
+            for intent_data in pending:
+                intent = intent_data.get("intent")
+                self._add_to_conversation_history("agent", f"Processing {intent}", type="status")
+                params = intent_data.get("params", {})
+                result, internal_log = self._execute_intent(intent, params)
+                reply = result["message"]
+                # Add partial reply
+                replies.append(reply)
+                self._add_to_conversation_history("agent", reply, type="partial")
+                self.case.internal_notes += f"\n- 🔁 Resumed: {internal_log}"
+                self.case.customer_notes += f"\n- {reply}"
 
-        self._add_to_conversation_history("agent", "Resuming pending tasks.")
-        replies = []
-        pending = list(self.case.pending_intents)  # Create a copy to iterate
+            # Clear the pending intents after successful execution
+            self.case.pending_intents = []
+            self.case.updated_at = now()
+            self.case.status = "resolved"
+            reply_text = "\n".join(replies)
+            self._add_to_conversation_history("agent", reply_text, type="final")
+            self.case.save()
 
-        for intent_data in pending:
-            intent = intent_data.get("intent")
-            params = intent_data.get("params", {})
-            result, internal_log = self._execute_intent(intent, params)
-            reply = result["message"]
-            replies.append(reply)
-            self.case.internal_notes += f"\n- 🔁 Resumed: {internal_log}"
-            self.case.customer_notes += f"\n- {reply}"
-
-        # Clear the pending intents after successful execution
-        self.case.pending_intents = []
-        self.case.updated_at = now()
-        self.case.status = "resolved"
-        reply_text = "\n".join(replies)
-        self._add_to_conversation_history("agent", reply_text)
-        self.case.save()
-
-        return {"history":history,
-                "reply": reply_text}
+        except Exception as e:
+            # Crucially, update the stream store on failure
+            if self.task_id in STREAM_DATA_STORE:
+                STREAM_DATA_STORE[self.task_id]['status'] = 'error'
+                STREAM_DATA_STORE[self.task_id]['data'].append(
+                    {"role": "system", "type": "final", "message": f"An error occurred: {e}"})
 
     def _handle_food_query(self, user_query):
         """Performs a RAG search on the vector database and generates a response."""
@@ -290,6 +334,7 @@ class AgentOrchestrator:
                 }
 
         # 1. Retrieval: Query the vector database
+        self._add_to_conversation_history("agent", "🔎 Searching the food database", type="status")
         collection = get_food_label_collection()
         results = collection.query(
             query_texts=[user_query],
@@ -297,6 +342,7 @@ class AgentOrchestrator:
         )
 
         # 2. Format the retrieved context for the LLM
+
         retrieved_docs = results['documents'][0]
         #print("retrieved_docs ", retrieved_docs)
         if not retrieved_docs:
@@ -308,6 +354,8 @@ class AgentOrchestrator:
         retrieved_context = "\n---\n".join(retrieved_docs)
 
         # 3. Generation: Use the LLM to generate a final answer
+        self._add_to_conversation_history("agent", "🧠 Generating a summary", type="status")
+
         prompt = f"""
         You are an expert on pet food analysis. Use the following scanned food label data to answer the user's question. 
         Focus only on the provided context. If the context does not contain the answer, state that you do not have enough information.
@@ -337,8 +385,8 @@ class AgentOrchestrator:
         # Check for example/clarification requests
         if message.lower() in ["examples", "give me examples", "not sure", "sample"]:
             reply = self._get_clarifying_examples(last_question)
-            self._add_to_conversation_history("agent", reply)
-            return {"reply": reply}
+            self._add_to_conversation_history("agent", reply, type="partial")
+            #return {"reply": reply}
 
         # If not an example request, update the slots
         updated_slots = self._update_slots_with_reply(slots, last_question, message)
@@ -352,8 +400,8 @@ class AgentOrchestrator:
         # All slots are filled, so execute the tool
         result = create_pet_via_agent(self.user, updated_slots.as_dict())
         self._clear_state()
-        self._add_to_conversation_history("agent", result["message"])
-        return {"reply": result["message"]}
+        self._add_to_conversation_history("agent", result["message"],type="partial")
+        #return {"reply": result["message"]}
 
     def _get_clarifying_examples(self, question):
         if "breed" in question.lower():
@@ -368,7 +416,7 @@ class AgentOrchestrator:
         state['last_question'] = question
         self.case.orchestrator_state = state
         self.case.save()
-        self._add_to_conversation_history("agent", question)
+        self._add_to_conversation_history("agent", question, type="partial")
 
     def _clear_state(self):
         self.case.orchestrator_state = {}

@@ -36,13 +36,25 @@ function showTyping() {
         <span class="agent-avatar">
             <img src="/static/images/paai_trim1.jpg" alt="PAAI avatar">
         </span>
-        <div class="typing-animation">
-            <span></span><span></span><span></span>
+       <div class="status-and-animation">
+            <div id="status-text"></div>
+            <div class="typing-animation">
+                <span></span><span></span><span></span>
+            </div>
         </div>
+
     `;
     typingMsg.id = "typing-indicator";
     chat.appendChild(typingMsg);
     chat.scrollTop = chat.scrollHeight;
+}
+
+// Function to update the status text in the typing animation
+function updateTypingStatus(message) {
+    const statusDiv = document.getElementById('status-text');
+    if (statusDiv) {
+        statusDiv.textContent = message;
+    }
 }
 
 // Hide typing animation
@@ -60,8 +72,9 @@ function sendAgentMessage() {
     input.value = '';
 
     showTyping();
+    updateTypingStatus("Thinking...");
 
-    fetch('/agent/', {
+    fetch('/agent/stream/start/', {
         method: 'POST',
         headers: {
             'Content-Type': 'application/json',
@@ -71,34 +84,78 @@ function sendAgentMessage() {
     })
     .then(response => response.json())
     .then(data => {
-        hideTyping();
-        const reply = data.reply || "Sorry, I didn’t get that.";
-        appendMessage('agent', reply);
+        const taskId = data.task_id;
+        const source = new EventSource(`/agent/stream/${taskId}/`);
+
+        source.onmessage = function(event) {
+            const streamedData = JSON.parse(event.data);
+            console.log(streamedData);
+            // Check if the message is a final reply
+            if (streamedData.type === 'status') {
+                // Handle a regular status update
+                updateTypingStatus(streamedData.message);
+            } else {
+                hideTyping();
+                appendMessage('agent', streamedData.message);
+                 showTyping();
+                if (streamedData.type === 'final'){hideTyping();source.close();}
+
+            }
+        };
+
+        source.onerror = function(error) {
+            hideTyping();
+            appendMessage('agent', "❌ Sorry, I'm unable to fulfill the request now, please try again.");
+            source.close();
+        };
     })
     .catch(error => {
-        appendMessage('agent', "❌ Sorry, I couldn’t understand.");
+        hideTyping();
+        appendMessage('agent', "❌ Sorry, I'm unable to fulfill the request now, please try again.");
     });
 }
 
 // Resume the pending intents by the agent
 function resumeAgentTasks() {
-    fetch('/agent/resume/', {
+    fetch('/agent/stream/resume/', {
         method: 'GET',
         credentials: 'include',
     })
     .then(response => response.json())
     .then(data => {
-        // ✅ replay old history if available
-        if (data.history && data.history.length > 0) {
-            data.history.forEach(turn => {
-                appendMessage(turn.role, turn.message);
-            });
-        }
-        const reply = data.reply || "No pending tasks found.";
-        appendMessage('agent', reply);
+        const taskId = data.task_id;
+        // Connect to the same streaming endpoint as the main chat
+        const source = new EventSource(`/agent/stream/${taskId}/`);
+
+        source.onmessage = function(event) {
+            const streamedData = JSON.parse(event.data);
+            console.log(streamedData);
+            // Handle the preloaded history first
+            if (streamedData.type === 'history_preload') {
+                toggleChat(); // Open the chat if it's not already open
+                streamedData.message.forEach(turn => {
+                    appendMessage(turn.role, turn.message);
+                });
+            }
+            // Handle the final message and close the stream
+            else if (streamedData.type === 'final') {
+                appendMessage('agent', streamedData.message);
+                source.close();
+            } else if (streamedData.type === 'status' || streamedData.type === 'partial') {
+                // Handle all other status/partial messages
+                updateTypingStatus(streamedData.message);
+            }
+        };
+
+        source.onerror = function(error) {
+            console.error("Stream resume error:", error);
+            appendMessage('agent', "❌ Failed to resume pending tasks.");
+            source.close();
+        };
     })
     .catch(error => {
-        console.error("Resume error:", error);
+        console.error("Resume start error:", error);
+        appendMessage('agent', "❌ Failed to start resume process.");
     });
 }
 
@@ -120,5 +177,7 @@ function getCookie(name) {
 
 // Resume tasks after page loads
 window.addEventListener('DOMContentLoaded', function () {
-    resumeAgentTasks();
+    if (window.isAuthenticated) {
+        resumeAgentTasks();
+    }
 });

@@ -177,6 +177,21 @@ pre {
 
 
 /* Typing Animation */
+
+/* Container for the avatar, message, and animation */
+#typing-container {
+    display: flex;
+    align-items: center; /* Vertically aligns all items */
+    gap: 10px; /* Adds space between the avatar and the content */
+}
+
+/* Container for the message and typing dots */
+.status-and-animation {
+    display: flex;
+    align-items: center;
+    gap: 8px; /* Adds space between the message and the dots */
+}
+
 .typing-animation {
     display: flex;
     align-items: center;

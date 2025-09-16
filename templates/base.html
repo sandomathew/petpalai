@@ -65,7 +65,9 @@
             <button onclick="sendAgentMessage()">Send</button>
         </div>
     </div>
-
+    <script>
+        window.isAuthenticated = {% if user.is_authenticated %}true{% else %}false{% endif %};
+    </script>
     <script src="{% static 'js/main.js' %}"></script>
 </body>
 </html>
